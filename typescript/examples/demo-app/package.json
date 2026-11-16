@@ -1,0 +1,15 @@
+{
+  "name": "zuno-sdk-demo-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "@sohaha/zuno-sdk": "../dist"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
