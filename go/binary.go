@@ -85,9 +85,20 @@ func EnsureZunoBinary(ctx context.Context) (string, error) {
 	return downloadBinary(ctx)
 }
 
-// releasesBase 是发布服务器基地址。
-func releasesBase() string {
-	return strings.TrimRight(zutil.Getenv("ZUNO_RELEASE_BASE"), "/")
+// 发布源基地址，按优先级排序：GitHub Releases 优先，releases.73zls.com
+// 为静默回退（访问不了 github.com 的机器仍能更新）。
+const (
+	githubReleasesBase = "https://github.com/seekwe/automatic/releases/download/zuno-releases"
+	r2ReleasesBase     = "https://releases.73zls.com/zuno"
+)
+
+// releasesBases 返回发布源基地址列表。ZUNO_RELEASE_BASE 设置时独占
+//（测试与自定义镜像），否则 GitHub 优先、R2 回退。
+func releasesBases() []string {
+	if base := strings.TrimRight(zutil.Getenv("ZUNO_RELEASE_BASE"), "/"); base != "" {
+		return []string{base}
+	}
+	return []string{githubReleasesBase, r2ReleasesBase}
 }
 
 type releaseManifest struct {
@@ -121,26 +132,38 @@ func downloadBinary(ctx context.Context) (string, error) {
 		return "", newError("download_failed", "不支持的平台："+runtime.GOOS+"-"+runtime.GOARCH)
 	}
 	version := zutil.Getenv("ZUNO_VERSION")
-	base := releasesBase()
-	if base == "" {
-		base = "https://releases.73zls.com/zuno"
+	bases := releasesBases()
+
+	var manifest *releaseManifest
+	manifestBase := bases[0]
+	var lastErr error
+	for _, base := range bases {
+		manifest, lastErr = fetchManifest(ctx, base+"/latest.json")
+		if lastErr == nil {
+			manifestBase = base
+			break
+		}
 	}
-	manifest, err := fetchManifest(ctx, base+"/latest.json")
-	if err != nil {
-		return "", err
+	if manifest == nil {
+		return "", lastErr
 	}
 	if version != "" {
 		manifest.Version = version
 	}
 	url := ""
+	assetName := ""
 	for _, asset := range manifest.Assets {
 		if asset.Target == target {
 			url = asset.URL
+			assetName = asset.Name
 			break
 		}
 	}
+	if assetName == "" {
+		assetName = "zuno-v" + manifest.Version + "-" + target + ".zip"
+	}
 	if url == "" {
-		url = base + "/zuno-v" + manifest.Version + "-" + target + ".zip"
+		url = manifestBase + "/" + assetName
 	}
 
 	// 下载到临时目录，解压出二进制，再放到仅当前用户可读的缓存目录。
@@ -152,6 +175,20 @@ func downloadBinary(ctx context.Context) (string, error) {
 	zipPath := filepath.Join(tmpDir, "zuno.zip")
 
 	res, err := zhttp.Get(url)
+	if err != nil || res.StatusCode() != 200 {
+		// 静默回退：同一份资产在另一个发布源上重试一次。
+		for _, base := range bases {
+			fallback := base + "/" + assetName
+			if fallback == url {
+				continue
+			}
+			res, err = zhttp.Get(fallback)
+			if err == nil && res.StatusCode() == 200 {
+				url = fallback
+				break
+			}
+		}
+	}
 	if err != nil {
 		return "", wrapError("download_failed", "无法下载 "+url, err)
 	}

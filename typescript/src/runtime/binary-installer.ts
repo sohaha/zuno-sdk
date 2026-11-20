@@ -23,9 +23,20 @@ const TARGET_MAP: Record<string, string> = {
   "win32-arm64": "aarch64-pc-windows-msvc",
 };
 
-const RELEASES_BASE = (
-  process.env.ZUNO_RELEASE_BASE ?? "https://releases.73zls.com/zuno"
-).replace(/\/+$/, "");
+const GITHUB_RELEASES_BASE =
+  "https://github.com/seekwe/automatic/releases/download/zuno-releases";
+const R2_RELEASES_BASE = "https://releases.73zls.com/zuno";
+
+/**
+ * 发布源基地址，按优先级排序。`ZUNO_RELEASE_BASE` 设置时独占（测试与
+ * 自定义镜像）；否则 GitHub Releases 优先，`releases.73zls.com` 为
+ * 静默回退（访问不了 github.com 的机器仍能更新）。
+ */
+function releaseBases(): string[] {
+  const custom = process.env.ZUNO_RELEASE_BASE?.replace(/\/+$/, "");
+  if (custom) return [custom];
+  return [GITHUB_RELEASES_BASE, R2_RELEASES_BASE];
+}
 
 interface ManifestAsset {
   target: string;
@@ -169,7 +180,21 @@ async function downloadBinary(): Promise<string> {
     throw new HarnessError("download_failed", `不支持的平台组合 ${key}`);
   }
 
-  const manifest = await fetchJson(`${RELEASES_BASE}/latest.json`);
+  const bases = releaseBases();
+  let manifest: Manifest | undefined;
+  let manifestBase = bases[0];
+  let lastError: unknown;
+  for (const base of bases) {
+    try {
+      manifest = await fetchJson(`${base}/latest.json`);
+      manifestBase = base;
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (!manifest) throw lastError;
+
   const pinned = process.env.ZUNO_VERSION?.replace(/^v/, "");
   const asset = (manifest.assets ?? []).find(
     (a) => a.target === target && (!pinned || a.name.includes(`-v${pinned}-`)),
@@ -184,19 +209,11 @@ async function downloadBinary(): Promise<string> {
   const dir = targetDir();
   fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
   const zipPath = path.join(dir, `.download.${process.pid}.zip`);
-  const url = asset.url ?? `${RELEASES_BASE}/${asset.name}`;
+  const primaryUrl = asset.url ?? `${manifestBase}/${asset.name}`;
 
-  const response = await fetch(url, { signal: AbortSignal.timeout(300_000) }).catch(
-    (e) => {
-      throw new HarnessError("download_failed", `无法下载 ${url}：${e.message}`);
-    },
+  const response = await fetchWithFallback(
+    [primaryUrl, ...bases.filter((b) => b !== manifestBase).map((b) => `${b}/${asset.name}`)],
   );
-  if (!response.ok) {
-    throw new HarnessError(
-      "download_failed",
-      `无法下载 ${url}：HTTP ${response.status} ${response.statusText}`,
-    );
-  }
   fs.writeFileSync(zipPath, Buffer.from(await response.arrayBuffer()));
 
   try {
@@ -226,6 +243,29 @@ async function downloadBinary(): Promise<string> {
   return bin;
 }
 
+/** 依次尝试下载 URL 列表，返回首个成功的响应（静默回退）。 */
+async function fetchWithFallback(urls: string[]): Promise<Response> {
+  let lastError: unknown;
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(300_000),
+      });
+      if (response.ok) return response;
+      lastError = new HarnessError(
+        "download_failed",
+        `无法下载 ${url}：HTTP ${response.status} ${response.statusText}`,
+      );
+    } catch (error) {
+      lastError = new HarnessError(
+        "download_failed",
+        `无法下载 ${url}：${(error as Error).message}`,
+      );
+    }
+  }
+  throw lastError;
+}
+
 /** 缓存二进制的版本字符串（没有缓存时返回 `undefined`）。 */
 export function cachedBinaryVersion(): string | undefined {
   try {
@@ -240,5 +280,7 @@ export function binaryDownloadUrl(
   platform = process.platform,
   arch = process.arch,
 ): string | undefined {
-  return releaseTarget(platform, arch) ? `${RELEASES_BASE}/latest.json` : undefined;
+  return releaseTarget(platform, arch)
+    ? `${releaseBases()[0]}/latest.json`
+    : undefined;
 }
