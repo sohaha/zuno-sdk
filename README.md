@@ -1,5 +1,12 @@
 # zuno-sdk
 
+## 只读目录权限
+
+创建会话可传 `filesystem` 与 daemon 上限求交，进一步收紧权限，显式空目录列表拒绝全部读取。启动私有实例可设置 daemon 上限。配置策略后只有只读访问，不支持 `write_roots` 或其他未知字段。所有根目录必须为绝对路径。
+SDK 在带策略创建前检查 `filesystem_policy` 能力，旧运行时不支持则报错，不会静默忽略。bridge 仅在 daemon 明确支持后宣告该能力。
+私有实例将策略写为 `ZUNO_FILESYSTEM_POLICY={"read_roots":[]}`，显式选项优先于额外环境变量。父子 fork/transfer 的有效策略由 daemon 保留，不能扩大 daemon 上限。
+受限会话暂不支持 bridge 的 `read_file`、`find_files`、`search_text`、`file_status` 直连文件接口，会返回 `unsupported`。请改用 daemon 的受限文件工具。
+
 面向 zuno harness API（协议 v1）的 SDK 集合，用于在应用中连接、驱动 zuno 会话并消费事件流。
 
 本目录包含两个独立语言包：

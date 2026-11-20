@@ -1,5 +1,18 @@
 # @sohaha/zuno-sdk
 
+## 只读目录权限
+
+```ts
+const instance = await ZunoClient.launch({
+  filesystem: { readRoots: ["/workspace/reference"] },
+});
+const session = await instance.createSession({
+  filesystem: { readRoots: [] }, // 显式拒绝全部读取
+});
+```
+
+创建策略与 daemon 上限求交，`filesystem` 省略时继承 daemon 上限，配置后只允许读取绝对目录，不能配置写目录。启动选项优先于 `env.ZUNO_FILESYSTEM_POLICY`，创建策略不能扩大 daemon 上限。创建前必须协商 `filesystem_policy` 能力，旧运行时会明确报错。fork/transfer 保留策略。受限会话的 bridge 直连文件 API 暂返回 `unsupported`，不会退回 cwd 校验绕过策略。
+
 zuno harness API（协议 v1）的 TypeScript SDK，用于在 Node.js 应用中连接、驱动 zuno 会话并消费事件流。
 
 ## 安装

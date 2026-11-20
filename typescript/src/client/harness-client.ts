@@ -138,7 +138,11 @@ export interface ConnectOptions {
   requestTimeoutMs?: number;
 }
 
+import { filesystemPolicyWire } from "../protocol/filesystem-policy.js";
+
 export interface CreateSessionOptions {
+  /** 只读目录策略，省略继承，空列表拒绝全部。 */
+  filesystem?: import("../protocol/filesystem-policy.js").FilesystemPolicy;
   workingDir?: string;
   /**
    * 替换整个组装好的系统提示词，而不只是其中的基础文本部分。
@@ -237,6 +241,11 @@ export class ZunoClient extends ClientCore {
         ...options,
         socketPath: instance.socketPath,
       });
+      if ((options.filesystem !== undefined || options.env?.ZUNO_FILESYSTEM_POLICY !== undefined ||
+          process.env.ZUNO_FILESYSTEM_POLICY !== undefined) && !client.supports("filesystem_policy")) {
+        client.close();
+        throw new HarnessError("unsupported", "此运行时不支持 filesystem_policy，拒绝启动不受限实例");
+      }
       client.instance = instance;
       return client;
     } catch (error) {
@@ -265,12 +274,18 @@ export class ZunoClient extends ClientCore {
       socketPath,
       clientName,
     );
-    const frame = await client.request({
-      req: "hello",
-      min_version: API_VERSION_MAJOR,
-      max_version: API_VERSION_MAJOR,
-      client: clientName,
-    });
+    let frame: ServerFrame;
+    try {
+      frame = await client.request({
+        req: "hello",
+        min_version: API_VERSION_MAJOR,
+        max_version: API_VERSION_MAJOR,
+        client: clientName,
+      });
+    } catch (error) {
+      await client.close();
+      throw error;
+    }
     if (frame.ev !== "hello_ok") {
       client.close();
       throw new HarnessError("handshake_failed", `意外的回复：${frame.ev}`);
@@ -327,8 +342,11 @@ export class ZunoClient extends ClientCore {
   }
 
   async createSession(options?: string | CreateSessionOptions): Promise<SessionInfo> {
-    const { workingDir, systemPrompt, providerChannel, disableBuiltinSkills, disableGlobalSkills, role, tools } =
+    const { workingDir, systemPrompt, providerChannel, disableBuiltinSkills, disableGlobalSkills, role, tools, filesystem } =
       typeof options === "string" ? { workingDir: options } : (options ?? {});
+    if (filesystem !== undefined && !this.supports("filesystem_policy")) {
+      throw new HarnessError("unsupported", "此运行时不支持 filesystem_policy，请更新 daemon 和 API bridge");
+    }
     if (tools) {
       this.requireSessionTools();
       prepareTools(tools);
@@ -336,6 +354,7 @@ export class ZunoClient extends ClientCore {
     const frame = await this.expectReply(
       {
         req: "create_session",
+        ...(filesystem !== undefined && { filesystem: filesystemPolicyWire(filesystem) }),
         working_dir: workingDir,
         system_prompt: systemPrompt,
         ...(providerChannel !== undefined && { provider_channel: providerChannel }),

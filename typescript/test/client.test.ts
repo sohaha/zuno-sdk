@@ -28,6 +28,16 @@ test("ndjson decoder reassembles frames split across chunks", () => {
   ]);
 });
 
+test("ndjson decoder preserves UTF-8 characters at every byte boundary", () => {
+  const frame = { v: 1, ev: "text_delta", text: "中文😀" };
+  const bytes = Buffer.from(`${JSON.stringify(frame)}\n`);
+  for (let split = 1; split < bytes.length; split++) {
+    const decoder = new NdjsonDecoder();
+    assert.deepEqual(decoder.push(bytes.subarray(0, split)), []);
+    assert.deepEqual(decoder.push(bytes.subarray(split)), [frame], `split=${split}`);
+  }
+});
+
 test("handshake records server identity and capabilities", async () => {
   const server = await startMockHarness();
   const client = await ZunoClient.connect({ socketPath: server.socketPath });
@@ -35,6 +45,20 @@ test("handshake records server identity and capabilities", async () => {
   assert.deepEqual(client.capabilities, ["sessions", "streaming"]);
   client.close();
   await server.close();
+});
+
+test("failed handshake closes the transport after a write failure", async () => {
+  const failure = new Error("握手写入失败");
+  let closes = 0;
+  await assert.rejects(ZunoClient.connect({
+    transport: {
+      write() { throw failure; },
+      onData() {},
+      onClose() {},
+      close() { closes++; },
+    },
+  }), (error) => error === failure);
+  assert.equal(closes, 1);
 });
 
 test("replies are correlated by id even when out of order", async () => {

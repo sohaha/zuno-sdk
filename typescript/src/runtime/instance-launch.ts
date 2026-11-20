@@ -154,7 +154,11 @@ function linkCredentialFile(source: string, root: string, relative: string): boo
 
 export type WakeMode = "internal" | "external"
 
+import { filesystemPolicyWire } from "../protocol/filesystem-policy.js"
+
 export interface LaunchOptions {
+  /** daemon 只读目录上限，优先于 env 中的策略，空列表拒绝全部。 */
+  filesystem?: import("../protocol/filesystem-policy.js").FilesystemPolicy
   /**
    * 存放实例状态（会话、日志、凭据）的目录。
    *
@@ -388,6 +392,9 @@ export async function launchInstance(options: LaunchOptions = {}): Promise<Launc
         // 私有子进程必须保持在启动它的二进制版本上。
         ZUNO_NO_AUTO_UPDATE: "1",
         ...options.env,
+        ...(options.filesystem === undefined ? {} : {
+          ZUNO_FILESYSTEM_POLICY: JSON.stringify(filesystemPolicyWire(options.filesystem)),
+        }),
         ...(options.swarmModel === undefined
           ? {}
           : { ZUNO_SWARM_MODEL: options.swarmModel }),

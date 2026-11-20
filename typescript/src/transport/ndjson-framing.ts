@@ -1,6 +1,7 @@
 /** 字节流上的 NDJSON 行分帧。 */
 
 import { HarnessError } from "../utils/harness-error.js";
+import { StringDecoder } from "node:string_decoder";
 
 /**
  * 残余缓冲的上限。一行协议帧不应超过这个量级；
@@ -16,9 +17,11 @@ const MAX_FRAME_BYTES = 8 * 1024 * 1024;
  */
 export class NdjsonDecoder {
   private buffer = "";
+  private readonly utf8 = new StringDecoder("utf8");
 
   push(chunk: Buffer | string): unknown[] {
-    this.buffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    // socket 可以在一个 Unicode 字符的字节中间断开，不能逐块 toString。
+    this.buffer += typeof chunk === "string" ? chunk : this.utf8.write(chunk);
     if (this.buffer.length > MAX_FRAME_BYTES && !this.buffer.includes("\n")) {
       this.buffer = "";
       throw new HarnessError("frame_too_large", `单帧超过 ${MAX_FRAME_BYTES} 字节上限`);

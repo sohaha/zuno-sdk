@@ -12,6 +12,7 @@
  */
 
 export * from "./protocol/harness-protocol.js";
+export type { FilesystemPolicy } from "./protocol/filesystem-policy.js";
 export * from "./transport/socket-endpoint.js";
 export * from "./transport/ndjson-framing.js";
 export { HarnessError } from "./utils/harness-error.js";

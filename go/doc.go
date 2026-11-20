@@ -23,5 +23,5 @@ package zuno
 // 协议版本，与 crates/zuno-harness-api/src/lib.rs 保持同步。
 const (
 	APIVersionMajor = 1
-	APIVersionMinor = 11
+	APIVersionMinor = 13
 )

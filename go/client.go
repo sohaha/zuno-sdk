@@ -58,12 +58,13 @@ func Connect(ctx context.Context, options ConnectOptions) (*Client, error) {
 		timeout = DefaultRequestTimeout
 	}
 	client := newClient(conn, timeout, socketPath, clientName)
-	frame, err := client.request(ctx, map[string]any{
+	hello := map[string]any{
 		"req":         "hello",
 		"min_version": APIVersionMajor,
 		"max_version": APIVersionMajor,
 		"client":      clientName,
-	})
+	}
+	frame, err := client.request(ctx, hello)
 	if err != nil {
 		client.Close()
 		return nil, err
@@ -470,6 +471,10 @@ func (s *subscription) Close() {
 	s.client.subsMu.Lock()
 	delete(s.client.subs, s)
 	s.client.subsMu.Unlock()
+	select {
+	case s.notify <- struct{}{}:
+	default:
+	}
 }
 
 // Len 返回当前缓冲的事件数（诊断用）。

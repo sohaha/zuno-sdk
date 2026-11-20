@@ -77,6 +77,8 @@ func (c *Client) SetRetentionPolicy(ctx context.Context, archiveAfterDays int) e
 
 // CreateSessionOptions 描述创建会话的参数。
 type CreateSessionOptions struct {
+	// Filesystem 只读目录策略，nil 继承，空列表拒绝全部。
+	Filesystem *FilesystemPolicy
 	WorkingDir string
 	// SystemPrompt 替换整个组装好的系统提示词，而不只是其中的基础文本部分。
 	// 默认指令和组装得到的指令/上下文追加内容不会再附加。
@@ -100,12 +102,18 @@ type CreateSessionOptions struct {
 
 // CreateSession 创建一个会话并附着它。
 func (c *Client) CreateSession(ctx context.Context, opts CreateSessionOptions) (SessionInfo, error) {
+	if opts.Filesystem != nil && !c.Supports("filesystem_policy") {
+		return SessionInfo{}, newError(CodeUnsupported, "此运行时不支持 filesystem_policy，请更新 daemon 和 API bridge")
+	}
 	if opts.Tools != nil {
 		if !c.Supports("session_tools") {
 			return SessionInfo{}, newError(CodeUnsupported, "此 harness 不支持 session_tools。请更新 zuno 运行时和 API bridge。")
 		}
 	}
 	body := map[string]any{"req": "create_session"}
+	if opts.Filesystem != nil {
+		body["filesystem"] = opts.Filesystem
+	}
 	if opts.WorkingDir != "" {
 		body["working_dir"] = opts.WorkingDir
 	}

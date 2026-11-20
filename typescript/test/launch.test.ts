@@ -1,6 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+test("显式只读策略不能被额外环境变量扩大", {skip:process.platform === "win32"}, async () => {
+  const { launchInstance } = await import("../dist/runtime/instance-launch.js");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zuno-filesystem-test-"));
+  try {
+    const binary = path.join(dir, "capture");
+    const captured = path.join(dir, "policy.json");
+    fs.writeFileSync(binary, "#!/bin/sh\nprintf '%s' \"$ZUNO_FILESYSTEM_POLICY\" > \"$CAPTURE_PATH\"\nexit 1\n", {mode:0o700});
+    await assert.rejects(launchInstance({binary, zunoHome:path.join(dir,"instance"), inheritLogins:false,
+      filesystem:{readRoots:[]}, startupTimeoutMs:2000,
+      env:{CAPTURE_PATH:captured,ZUNO_FILESYSTEM_POLICY:'{"read_roots":["/"]}'}}));
+    assert.deepEqual(JSON.parse(fs.readFileSync(captured,"utf8")), {read_roots:[]});
+  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+});
+
 /**
  * 没有开发者模式/管理员权限的 Windows 无法创建符号链接。
  * 那些构造符号链接 fixture（或依赖凭据继承链接）的测试在那里

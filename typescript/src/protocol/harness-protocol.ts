@@ -7,13 +7,14 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 11;
+export const API_VERSION_MINOR = 13;
 
 export type RuntimeCommand = "skills" | "context" | "info" | "cache" | "memory" | "swarm" | "agents" | "subagent_model" | "autoreview" | "autojudge" | "transport" | "fast" | "overnight" | "productivity" | "premium" | "provider_test_coverage" | "refresh_model_list" | "continue" | "resume_all" | "remote" | "server_reload" | "review" | "judge" | "subagent" | "auth" | "logout";
 
 export type PermissionDecision = "allow" | "allow_always" | "deny";
 
 export type ErrorCode =
+  | "unsupported"
   | "unsupported_version"
   | "unknown_request"
   | "unknown_session"
@@ -181,6 +182,7 @@ export type ApiRequest =
   | { req: "set_retention_policy"; archive_after_days?: number }
   | {
       req: "create_session";
+      filesystem?: { read_roots: string[] };
       working_dir?: string;
       system_prompt?: string;
       provider_channel?: ProviderChannelSpec;

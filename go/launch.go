@@ -97,6 +97,8 @@ const (
 
 // LaunchOptions 描述启动私有实例的参数。
 type LaunchOptions struct {
+	// Filesystem daemon 只读目录上限，优先于 Env 中的策略。
+	Filesystem *FilesystemPolicy
 	// ZunoHome 是存放实例状态（会话、日志、凭据）的目录。
 	//
 	// 默认为新建的临时目录，Shutdown 时移除。
@@ -223,6 +225,13 @@ func Launch(ctx context.Context, options LaunchOptions) (*LaunchedInstance, erro
 	for k, v := range options.Env {
 		setEnv(k, v)
 	}
+	if options.Filesystem != nil {
+		policy, err := json.Marshal(options.Filesystem)
+		if err != nil {
+			return nil, err
+		}
+		setEnv("ZUNO_FILESYSTEM_POLICY", string(policy))
+	}
 
 	cmd := exec.Command(binary, "--no-update", "api-bridge", "--api-socket", socketPath)
 	cmd.Dir = options.WorkingDir
@@ -307,6 +316,12 @@ func LaunchAndConnect(ctx context.Context, options LaunchOptions, connect Connec
 		return nil, err
 	}
 	client.instance = instance
+	_, policyEnv := options.Env["ZUNO_FILESYSTEM_POLICY"]
+	_, inheritedPolicy := os.LookupEnv("ZUNO_FILESYSTEM_POLICY")
+	if (options.Filesystem != nil || policyEnv || inheritedPolicy) && !client.Supports("filesystem_policy") {
+		_ = client.Close()
+		return nil, newError(CodeUnsupported, "此运行时不支持 filesystem_policy，拒绝启动不受限实例")
+	}
 	return client, nil
 }
 

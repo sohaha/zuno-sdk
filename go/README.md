@@ -1,5 +1,20 @@
 # zuno-sdk-go
 
+## 只读目录权限
+
+```go
+client, err := zuno.LaunchAndConnect(ctx, zuno.LaunchOptions{
+    Filesystem: &zuno.FilesystemPolicy{ReadRoots: []string{"/workspace/reference"}},
+}, zuno.ConnectOptions{})
+if err != nil { panic(err) }
+defer client.Close()
+session, err := client.CreateSession(ctx, zuno.CreateSessionOptions{
+    Filesystem: &zuno.FilesystemPolicy{ReadRoots: []string{}}, // 拒绝全部读取
+})
+```
+
+创建策略与 daemon 上限求交，`Filesystem == nil` 继承 daemon 上限，非 nil 的空 `ReadRoots` 拒绝全部读取（包括结构体零值）。配置后仅只读，不支持写目录。根目录必须为绝对路径。启动选项优先于 `Env["ZUNO_FILESYSTEM_POLICY"]`，创建前要求 `filesystem_policy` 能力，旧运行时明确报错。fork/transfer 保留策略。受限会话的 bridge 直连文件 API 暂返回 `unsupported`，不会退回 cwd 校验。
+
 zuno harness API（协议 v1）的 Go SDK，用于在 Go 应用中连接、驱动 zuno 会话并消费事件流。
 
 ## 安装

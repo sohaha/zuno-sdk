@@ -83,6 +83,13 @@ func (s *SubscriptionManaged) Close() {
 	s.subscription.Close()
 }
 
+// Err 返回导致全局流停止的错误，正常关闭返回 nil。
+func (s *SubscriptionManaged) Err() error {
+	s.stream.mu.Lock()
+	defer s.stream.mu.Unlock()
+	return s.stream.err
+}
+
 // globalEventsStream 管理发现循环与子连接。
 type globalEventsStream struct {
 	mu       sync.Mutex
@@ -92,6 +99,7 @@ type globalEventsStream struct {
 	children map[string]*Client
 	starting map[string]bool
 	stopped  bool
+	err      error
 	stopOnce sync.Once
 	rootCtx  context.Context
 }
@@ -110,7 +118,17 @@ func (g *globalEventsStream) Stop() {
 		for _, child := range children {
 			_ = child.Close()
 		}
+		g.queue.Close()
 	})
+}
+
+func (g *globalEventsStream) fail(err error) {
+	g.mu.Lock()
+	if !g.stopped {
+		g.err = err
+	}
+	g.mu.Unlock()
+	g.Stop()
 }
 
 func (g *globalEventsStream) isStopped() bool {
@@ -136,15 +154,16 @@ func (g *globalEventsStream) startChild(sessionID string) {
 
 	ctx, cancel := context.WithCancel(g.rootCtx)
 	child, err := Connect(ctx, ConnectOptions{
-		SocketPath: g.client.socketPath,
-		ClientName: g.client.clientName + "/global-events",
+		SocketPath:     g.client.socketPath,
+		ClientName:     g.client.clientName + "/global-events",
+		RequestTimeout: g.client.requestTimeout,
 	})
 	if err != nil {
 		cancel()
 		// 会话在扫描与连接之间被删除是正常情况，不打断整条流。
 		var herr *HarnessError
 		if !errors.As(err, &herr) || herr.Code != "unknown_session" {
-			g.Stop()
+			g.fail(err)
 		}
 		return
 	}
@@ -164,6 +183,10 @@ func (g *globalEventsStream) startChild(sessionID string) {
 		g.mu.Unlock()
 		_ = child.Close()
 		cancel()
+		var herr *HarnessError
+		if !errors.As(err, &herr) || herr.Code != "unknown_session" {
+			g.fail(err)
+		}
 		return
 	}
 
@@ -199,7 +222,7 @@ func (g *globalEventsStream) scanLoop() {
 			if g.isStopped() {
 				return
 			}
-			g.Stop()
+			g.fail(err)
 			return
 		}
 		for _, session := range sessions {
