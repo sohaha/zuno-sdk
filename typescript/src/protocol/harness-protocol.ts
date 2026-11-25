@@ -394,6 +394,23 @@ export type ApiEvent =
       summary: string;
       done?: boolean;
     }
+  /**
+   * 已附着会话的一个子智能体，由 bridge 从 daemon 的 `swarm_status` 成员快照
+   * 折叠而来。`zuno` 把子智能体作为 swarm worker 会话运行，因此 `subagent_id`
+   * 是 worker 自己的会话 id，`status` 是其生命周期状态（running/completed/...）。
+   * 仅直接子成员。新增事件：旧客户端跳过。
+   */
+  | {
+      ev: "subagent_status";
+      session_id: string;
+      subagent_id: string;
+      label?: string;
+      subagent_type?: string;
+      status: string;
+      detail?: string;
+      todo_progress?: [number, number];
+      output_tail?: string;
+    }
   | { ev: "message_accepted"; session_id: string }
   | {
       ev: "permission_request";
@@ -520,6 +537,7 @@ export const KNOWN_EVENT_KINDS = [
   "side_panel_state",
   "soft_interrupt_injected",
   "soft_interrupts_cancelled",
+  "subagent_status",
   "text_matches",
   "text_delta",
   "text_done",
