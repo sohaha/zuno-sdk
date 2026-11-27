@@ -387,6 +387,10 @@ func isNotFound(err error) bool {
 // 其他文件复制，让实例可以修改自己的配置而不动用户的。副本仅属主可访问。
 //
 // 返回实际继承到的名字列表，让调用方能区分"什么都没继承"和"继承到了东西"。
+//
+// 凭据文件只能共享不能复制，所以链接失败会返回错误而不是跳过：
+// 一个没有凭据却“启动成功”的实例，只会在第一次请求时以难懂的鉴权错误暴露出来，
+// 与 Rust SDK 的 inherit_credentials 一致。
 func InheritCredentials(fromHome, toHome string) ([]string, error) {
 	if err := os.MkdirAll(toHome, 0o700); err != nil {
 		return nil, wrapError("invalid_instance_home", "无法创建实例 home", err)
@@ -411,12 +415,12 @@ func InheritCredentials(fromHome, toHome string) ([]string, error) {
 			// 复用的 zunoHome 里已有这些链接，而 symlink 遇到 EEXIST
 			// 会抛错而不是替换。重新链接还能修正上一次运行留下的过期链接。
 			_ = os.Remove(destination)
-			if err := os.Symlink(source, destination); err != nil {
-				continue
+			if err := symlinkCredential(source, destination); err != nil {
+				return nil, err
 			}
 		} else {
 			if err := copyFileMode(source, destination, 0o600); err != nil {
-				continue
+				return nil, wrapError("credential_inherit_failed", "无法复制 "+name+" 到实例 home", err)
 			}
 		}
 		inherited = append(inherited, name)
@@ -436,7 +440,11 @@ func InheritCredentials(fromHome, toHome string) ([]string, error) {
 				continue
 			}
 			relative := filepath.Join("config", appConfigDirname, name)
-			if linkCredentialFile(filepath.Join(userConfig, name), toHome, relative) {
+			linked, err := linkCredentialFile(filepath.Join(userConfig, name), toHome, relative)
+			if err != nil {
+				return nil, err
+			}
+			if linked {
 				inherited = append(inherited, relative)
 			}
 		}
@@ -448,7 +456,11 @@ func InheritCredentials(fromHome, toHome string) ([]string, error) {
 	for _, relative := range externalCredentialFiles {
 		source := filepath.Join(home, fromSlash(relative))
 		instanceRelative := filepath.Join("external", fromSlash(relative))
-		if linkCredentialFile(source, toHome, instanceRelative) {
+		linked, err := linkCredentialFile(source, toHome, instanceRelative)
+		if err != nil {
+			return nil, err
+		}
+		if linked {
 			inherited = append(inherited, "external/"+relative)
 		}
 	}
@@ -463,7 +475,11 @@ func InheritCredentials(fromHome, toHome string) ([]string, error) {
 			}
 			for _, name := range []string{"auth-profiles.json", "auth.json"} {
 				relative := filepath.Join(".openclaw", "agents", agent.Name(), "agent", name)
-				if linkCredentialFile(filepath.Join(home, fromSlash(relative)), toHome, filepath.Join("external", relative)) {
+				linked, err := linkCredentialFile(filepath.Join(home, fromSlash(relative)), toHome, filepath.Join("external", relative))
+				if err != nil {
+					return nil, err
+				}
+				if linked {
 					inherited = append(inherited, "external/"+relative)
 				}
 			}
@@ -516,21 +532,49 @@ func copyFileMode(source, destination string, mode os.FileMode) error {
 	return os.Chmod(destination, mode)
 }
 
+// symlinkCredential 创建一个指向用户凭据文件的符号链接。
+//
+// 共享凭据只能用链接：token 会轮转，两个副本会互相作废。所以链接失败
+// 不能静默降级成一个副本（那会让实例拿着过期 token 且看不出原因），
+// 必须让调用方看到系统层面的原因。
+//
+// Windows 上创建符号链接需要开启 Developer Mode 或管理员权限；这里把那个
+// 系统错误翻译成可执行的指引，与 Rust SDK 的 link_file 一样是失败即报错。
+func symlinkCredential(source, destination string) error {
+	if err := os.Symlink(source, destination); err != nil {
+		return wrapError("credential_inherit_failed",
+			"无法共享凭据 "+source+" 到实例 home："+symlinkHint()+"：", err)
+	}
+	return nil
+}
+
+// symlinkHint 说明创建符号链接所需的平台前提。
+func symlinkHint() string {
+	if runtime.GOOS == "windows" {
+		return "Windows 创建符号链接需要开启 Developer Mode 或以管理员身份运行"
+	}
+	return "当前环境禁止创建符号链接"
+}
+
 // linkCredentialFile 把实例内的一个相对路径替换为指向单个凭据文件的链接。
-func linkCredentialFile(source, root, relative string) bool {
+//
+// 返回 false 且 err 为 nil 表示源文件不存在（正常情况，该用户没登录这个
+// provider）。链接失败则返回错误，由调用方中止继承，而不是留下一个没有
+// 凭据的“成功”实例。
+func linkCredentialFile(source, root, relative string) (bool, error) {
 	if !zfile.FileExist(source) {
-		return false
+		return false, nil
 	}
 	parent := filepath.Dir(filepath.Join(root, relative))
 	if err := os.MkdirAll(parent, 0o700); err != nil {
-		return false
+		return false, wrapError("credential_inherit_failed", "无法创建实例内的凭据目录 "+parent, err)
 	}
 	destination := filepath.Join(root, relative)
 	_ = os.Remove(destination)
-	if err := os.Symlink(source, destination); err != nil {
-		return false
+	if err := symlinkCredential(source, destination); err != nil {
+		return false, err
 	}
-	return true
+	return true, nil
 }
 
 // serversRegistry 是实例 $ZUNO_HOME/servers.json 的形状。

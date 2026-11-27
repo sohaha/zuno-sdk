@@ -1,6 +1,7 @@
 package zuno
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -71,6 +72,34 @@ func TestInheritCredentialsSymlinksSharedFiles(t *testing.T) {
 		if perm := copyInfo.Mode().Perm(); perm != 0o600 {
 			t.Fatalf("副本权限应归一化为 0600，得到 %o", perm)
 		}
+	}
+}
+
+// TestInheritCredentialsFailsWhenLinkImpossible 钉住"不静默降级"：
+// 凭据无法共享时必须报错，而不是留下一个没有凭据却看似启动成功的实例。
+// 用一个非空目录占住目标位置，让 os.Remove + os.Symlink 必定失败，
+// 不依赖系统是否授予符号链接权限，在任何平台都能跑。
+func TestInheritCredentialsFailsWhenLinkImpossible(t *testing.T) {
+	userHome := t.TempDir()
+	instanceHome := t.TempDir()
+	t.Setenv("HOME", userHome)
+	t.Setenv("ZUNO_APP_CONFIG_DIR", filepath.Join(userHome, "appconfig"))
+	if err := os.WriteFile(filepath.Join(userHome, "auth.json"), []byte("token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	blocked := filepath.Join(instanceHome, "auth.json")
+	if err := os.MkdirAll(filepath.Join(blocked, "occupied"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := InheritCredentials(userHome, instanceHome)
+	if err == nil {
+		t.Fatal("凭据无法共享时必须返回错误，不能留下没有凭据的实例")
+	}
+	var herr *HarnessError
+	if !errors.As(err, &herr) || herr.Code != "credential_inherit_failed" {
+		t.Fatalf("期望 credential_inherit_failed，得到 %v", err)
 	}
 }
 
