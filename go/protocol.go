@@ -41,6 +41,7 @@ var KnownEventKinds = []string{
 	"side_panel_state",
 	"soft_interrupt_injected",
 	"soft_interrupts_cancelled",
+	"subagent_status",
 	"text_matches",
 	"text_delta",
 	"text_done",

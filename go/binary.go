@@ -93,7 +93,7 @@ const (
 )
 
 // releasesBases 返回发布源基地址列表。ZUNO_RELEASE_BASE 设置时独占
-//（测试与自定义镜像），否则 GitHub 优先、R2 回退。
+// （测试与自定义镜像），否则 GitHub 优先、R2 回退。
 func releasesBases() []string {
 	if base := strings.TrimRight(zutil.Getenv("ZUNO_RELEASE_BASE"), "/"); base != "" {
 		return []string{base}

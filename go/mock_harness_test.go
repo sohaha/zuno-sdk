@@ -17,9 +17,12 @@ import (
 type mockHarness struct {
 	t        *testing.T
 	listener net.Listener
-	mu       sync.Mutex
-	conns    []net.Conn
-	requests []map[string]any
+	// socketPath 是测试要用的 socket 路径（不是监听器地址）：Windows 上监听器
+	// 实际是一条派生出来的命名管道，只有原始路径才能交给 Connect 再派生回去。
+	socketPath string
+	mu         sync.Mutex
+	conns      []net.Conn
+	requests   []map[string]any
 	// onFrame 允许测试自定义回复行为；返回 false 表示用默认处理。
 	onFrame func(h *mockHarness, conn net.Conn, frame map[string]any) bool
 }
@@ -30,15 +33,13 @@ func newMockHarness(t *testing.T) *mockHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	listener, err := net.Listen("unix", filepath.Join(dir, "zuno-api.sock"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	socketPath := filepath.Join(dir, "zuno-api.sock")
+	listener := listenMockEndpoint(t, socketPath)
 	t.Cleanup(func() {
 		listener.Close()
 		os.RemoveAll(dir)
 	})
-	h := &mockHarness{t: t, listener: listener}
+	h := &mockHarness{t: t, listener: listener, socketPath: socketPath}
 	go h.acceptLoop()
 	return h
 }

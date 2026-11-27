@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +66,25 @@ func TestNdjsonDecoderFrameTooLarge(t *testing.T) {
 }
 
 func TestTransportEndpointUnixIsPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows 上没有 socket 文件：端点是从路径派生出的命名管道。
+		// 这里钉住派生的三个性质：可读词干前缀、同路径稳定、异路径不等。
+		got := TransportEndpoint(`C:\run\zuno-api.sock`)
+		if !strings.HasPrefix(got, `\\.\pipe\zuno-api-`) {
+			t.Fatalf("Windows 上端点应是派生管道，得到 %s", got)
+		}
+		if again := TransportEndpoint(`C:\run\zuno-api.sock`); again != got {
+			t.Fatalf("同一路径应派生同一管道，得到 %s 与 %s", got, again)
+		}
+		if other := TransportEndpoint(`C:\run\other.sock`); other == got {
+			t.Fatal("不同路径不得派生同一管道")
+		}
+		// Windows 路径大小写不敏感，哈希前会统一小写。
+		if upper := TransportEndpoint(`c:\RUN\zuno-api.sock`); upper != got {
+			t.Fatalf("派生应大小写不敏感，得到 %s 与 %s", got, upper)
+		}
+		return
+	}
 	if got := TransportEndpoint("/run/user/1000/zuno-api.sock"); got != "/run/user/1000/zuno-api.sock" {
 		t.Fatalf("Unix 上端点应为路径本身，得到 %s", got)
 	}
@@ -76,8 +97,8 @@ func TestAPISocketPathOverride(t *testing.T) {
 	}
 	os.Unsetenv("ZUNO_API_SOCKET")
 	t.Setenv("ZUNO_RUNTIME_DIR", "/custom-run")
-	if got := APISocketPath(); got != "/custom-run/zuno-api.sock" {
-		t.Fatalf("ZUNO_RUNTIME_DIR 应生效，得到 %s", got)
+	if got, want := APISocketPath(), filepath.Join("/custom-run", "zuno-api.sock"); got != want {
+		t.Fatalf("ZUNO_RUNTIME_DIR 应生效，期望 %s，得到 %s", want, got)
 	}
 }
 
@@ -127,7 +148,7 @@ func TestConnectAndRun(t *testing.T) {
 }
 
 func socketPathOf(h *mockHarness) string {
-	return h.listener.Addr().String()
+	return h.socketPath
 }
 
 func TestRunWithToolCall(t *testing.T) {

@@ -3,6 +3,7 @@ package zuno
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -10,7 +11,23 @@ import (
 // 这些护栏一旦回归，后果是删掉用户的真实凭据或把 token 复制成
 // 集群可读副本，所以值得钉死。
 
+// requireSymlink 在无法创建符号链接的环境跳过测试。
+//
+// Windows 未启用 Developer Mode 且非管理员时 os.Symlink 返回
+// ERROR_PRIVILEGE_NOT_HELD。下面这些测试钉的是“链接语义”——共享
+// 凭据必须是链接而非副本、清理不得跟随链接——环境给不出链接时就无法
+// 表达这个前提，跳过而不是把“缺少系统权限”报成回归。
+func requireSymlink(t *testing.T) {
+	t.Helper()
+	target := t.TempDir()
+	probe := filepath.Join(t.TempDir(), "symlink-probe")
+	if err := os.Symlink(target, probe); err != nil {
+		t.Skipf("此环境无法创建符号链接（Windows 需 Developer Mode 或管理员权限）：%v", err)
+	}
+}
+
 func TestInheritCredentialsSymlinksSharedFiles(t *testing.T) {
+	requireSymlink(t)
 	userHome := t.TempDir()
 	instanceHome := t.TempDir()
 	// 隔离外部凭据来源：$HOME 只剩本测试的文件，配置目录为空。
@@ -48,8 +65,12 @@ func TestInheritCredentialsSymlinksSharedFiles(t *testing.T) {
 	if copyInfo.Mode()&os.ModeSymlink != 0 {
 		t.Fatal("config.toml 应是副本，不是链接（实例要能改自己的配置）")
 	}
-	if perm := copyInfo.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("副本权限应归一化为 0600，得到 %o", perm)
+	if runtime.GOOS != "windows" {
+		// Windows 用文件属性表达只读位，没有 POSIX 权限位（0600 读回来是 0666），
+		// 所以只在 POSIX 上钉住权限归一化。
+		if perm := copyInfo.Mode().Perm(); perm != 0o600 {
+			t.Fatalf("副本权限应归一化为 0600，得到 %o", perm)
+		}
 	}
 }
 
@@ -61,6 +82,7 @@ func TestInheritCredentialsRejectsSameHome(t *testing.T) {
 }
 
 func TestInheritCredentialsRejectsSymlinkHome(t *testing.T) {
+	requireSymlink(t)
 	real := t.TempDir()
 	link := filepath.Join(t.TempDir(), "link")
 	if err := os.Symlink(real, link); err != nil {
@@ -72,6 +94,7 @@ func TestInheritCredentialsRejectsSymlinkHome(t *testing.T) {
 }
 
 func TestInheritCredentialsCopiesEnvFiles(t *testing.T) {
+	requireSymlink(t)
 	// provider env 文件来自平台配置目录，链接为文件而非目录。
 	userHome := t.TempDir()
 	instanceHome := t.TempDir()
@@ -125,6 +148,7 @@ func TestRemoveInstanceHomeRefusesOutsideTemp(t *testing.T) {
 }
 
 func TestRemoveInstanceHomeUnlinksButNeverFollowsSymlinks(t *testing.T) {
+	requireSymlink(t)
 	tempRoot := os.TempDir()
 	realDir := filepath.Join(t.TempDir(), "real-credentials")
 	if err := os.MkdirAll(realDir, 0o700); err != nil {
@@ -176,6 +200,28 @@ func TestRemoveInstanceHomeUnlinksButNeverFollowsSymlinks(t *testing.T) {
 	}
 	if _, err := os.Stat(home); !os.IsNotExist(err) {
 		t.Fatal("临时 home 应被清空删除")
+	}
+}
+
+// TestRemoveInstanceHomeDeletesPlainTree 不依赖符号链接，在任何环境都能跑：
+// 确保“跳过链接语义”不会让“普通目录能被删干净”也失去覆盖。
+func TestRemoveInstanceHomeDeletesPlainTree(t *testing.T) {
+	home := filepath.Join(os.TempDir(), "zuno-sdk-instance-plain-tree")
+	if err := os.MkdirAll(filepath.Join(home, "run"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "session.json"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "run", "zuno-api.sock"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(home) })
+
+	removeInstanceHome(home)
+
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Fatalf("普通实例 home 应被完整删除，得到 %v", err)
 	}
 }
 
